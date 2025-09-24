@@ -1,0 +1,8 @@
+FROM nginx:alpine
+
+# Copia confs
+COPY ./nginx/conf.d /etc/nginx/conf.d
+
+WORKDIR /var/www
+EXPOSE 80 443
+CMD ["nginx", "-g", "daemon off;"]

@@ -1,0 +1,135 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: handscores-api
+    container_name: handscores-api
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: app
+      TZ: America/Sao_Paulo
+      # Descomente para ativar debug (e garanta que seu IDE escute na 9003)
+      # XDEBUG_MODE: debug,develop
+    volumes:
+      - .:/var/www
+      - ./php/90-xdebug.ini:/usr/local/etc/php/conf.d/90-xdebug.ini:ro
+    working_dir: /var/www
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - hand-network
+    # Não é necessário expor portas do PHP-FPM (nginx fala pela rede interna).
+    # Se quiser debugar via host, use o port-forward do Nginx ou mapeie 9003.
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile_Nginx
+    image: handscores-nginx
+    container_name: handscores-nginx
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      # HTTPS externo → porta 443 do Nginx
+      - "8686:443"
+      # (opcional) HTTP externo p/ testes locais:
+      - "8086:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../certs:/etc/nginx/certs:ro
+      - ./:/var/www:ro
+    networks:
+      - hand-network
+
+  mysql:
+    image: mariadb:11.4
+    container_name: handscores-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: hand@2025
+      MYSQL_DATABASE: handscores
+      MYSQL_USER: hand
+      MYSQL_PASSWORD: hand@2025
+      TZ: America/Sao_Paulo
+    ports:
+      - "3311:3306"
+    volumes:
+      - dbdata:/var/lib/mysql
+    networks:
+      - hand-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: hand-redis
+    restart: unless-stopped
+    ports:
+      - "6382:6379"
+    networks:
+      - hand-network
+
+  # Opcional: Horizon (filas)
+  horizon:
+    image: handscores-api
+    container_name: handscores-horizon
+    restart: unless-stopped
+    command: php artisan horizon
+    depends_on:
+      - app
+      - redis
+      - mysql
+    working_dir: /var/www
+    volumes:
+      - .:/var/www
+    networks:
+      - hand-network
+
+  # Opcional: Scheduler (cron do Laravel)
+  scheduler:
+    image: handscores-api
+    container_name: handscores-scheduler
+    restart: unless-stopped
+    command: php artisan schedule:work
+    depends_on:
+      - app
+      - redis
+      - mysql
+    working_dir: /var/www
+    volumes:
+      - .:/var/www
+    networks:
+      - hand-network
+
+  # Opcional: Reverb (WebSocket nativo Laravel)
+  reverb:
+    image: handscores-api
+    container_name: handscores-reverb
+    restart: unless-stopped
+    command: php artisan reverb:start
+    depends_on:
+      - app
+      - redis
+    environment:
+      REVERB_HOST: 0.0.0.0
+      REVERB_PORT: 8080
+    ports:
+      - "8087:8080"
+    working_dir: /var/www
+    volumes:
+      - .:/var/www
+    networks:
+      - hand-network
+
+networks:
+  hand-network:
+    driver: bridge
+
+volumes:
+  dbdata:
+    driver: local
